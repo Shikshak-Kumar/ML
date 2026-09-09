@@ -14,10 +14,35 @@ const STRESS_LEVELS = ['Low', 'Medium', 'High', 'Very High'];
 // Maps the 0–10 score to a short, plain-language read. Purely descriptive —
 // the model is the source of truth for the number itself.
 function describeScore(score) {
-  if (score <= 3) return { label: 'Running low', tone: 'Habits look settled this week.' };
-  if (score <= 5.5) return { label: 'Holding steady', tone: 'A fairly balanced rhythm overall.' };
-  if (score <= 7.5) return { label: 'A bit stretched', tone: 'A few habits are pulling in the wrong direction.' };
-  return { label: 'Signal is spiking', tone: 'Several inputs are running hot at once.' };
+  if (score <= 3) return { label: 'Running low', tone: 'Habits look settled this week.', good: true };
+  if (score <= 5.5) return { label: 'Holding steady', tone: 'A fairly balanced rhythm overall.', good: false };
+  if (score <= 7.5) return { label: 'A bit stretched', tone: 'A few habits are pulling in the wrong direction.', good: false };
+  return { label: 'Signal is spiking', tone: 'Several inputs are running hot at once.', good: false };
+}
+
+// Turns the raw inputs into 1–3 concrete, ranked suggestions. Each rule is
+// tied to an actual field the person entered, not generic advice.
+function generateAdvice(formData) {
+  const sleep = Number(formData.sleep_hours_per_night);
+  const screen = Number(formData.avg_daily_usage_hours);
+  const unlocks = Number(formData.daily_unlocks);
+  const activity = Number(formData.physical_activity_hours);
+  const stress = formData.stress_level;
+
+  const candidates = [
+    !Number.isNaN(sleep) && sleep < 6 &&
+      'Sleep is under 6 hours — even 30–45 extra minutes tends to move this the most.',
+    (stress === 'High' || stress === 'Very High') &&
+      'Stress is marked high — that alone is likely the biggest factor in this reading.',
+    !Number.isNaN(screen) && screen > 6 &&
+      'Screen time is running high — trimming an hour off your top app would ease this.',
+    !Number.isNaN(unlocks) && unlocks > 80 &&
+      'Phone unlocks are frequent — batching checks instead of reflexive ones would help.',
+    !Number.isNaN(activity) && activity < 0.5 &&
+      'Barely any movement logged today — a short walk goes further than it seems.'
+  ].filter(Boolean);
+
+  return candidates.slice(0, 3);
 }
 
 // Animates a number from its previous value to a new one — used only for the
@@ -51,7 +76,33 @@ function useCountUp(target, durationMs = 900) {
   return value;
 }
 
-function SignalRing({ score }) {
+const APPLAUSE_DOTS = Array.from({ length: 10 }, (_, i) => {
+  const angle = (i / 10) * 2 * Math.PI;
+  const dist = 46 + (i % 2) * 16;
+  return {
+    x: Math.round(Math.cos(angle) * dist),
+    y: Math.round(Math.sin(angle) * dist),
+    delay: (i % 5) * 0.03
+  };
+});
+
+// A one-shot burst, replayed by remounting with a fresh key whenever a new
+// good score comes in — the single celebratory motion moment in this UI.
+function Applause() {
+  return (
+    <div className="applause" aria-hidden="true">
+      {APPLAUSE_DOTS.map((d, i) => (
+        <span
+          key={i}
+          className="applause-dot"
+          style={{ '--x': `${d.x}px`, '--y': `${d.y}px`, animationDelay: `${d.delay}s` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SignalRing({ score, celebrate }) {
   const radius = 92;
   const circumference = 2 * Math.PI * radius;
   const pct = score === null ? 0 : Math.max(0, Math.min(10, score)) / 10;
@@ -61,6 +112,7 @@ function SignalRing({ score }) {
 
   return (
     <div className="ring-wrap">
+      {celebrate && <Applause key={score} />}
       <div className="ring-glow" style={{ opacity: score === null ? 0 : 0.25 + pct * 0.45 }} />
       <svg viewBox="0 0 220 220" className="ring-svg">
         <g className="ring-ticks">
@@ -215,6 +267,7 @@ export default function App() {
   };
 
   const descriptor = score === null ? null : describeScore(score);
+  const tips = score === null ? [] : generateAdvice(formData);
 
   return (
     <div className="app">
@@ -375,9 +428,17 @@ export default function App() {
               </>
             ) : (
               <>
-                <SignalRing score={score} />
-                <h2 className="score-title">{descriptor.label}</h2>
+                <SignalRing score={score} celebrate={descriptor.good} />
+                <h2 className={`score-title ${descriptor.good ? 'is-good' : ''}`}>{descriptor.label}</h2>
                 <p className="score-tone">{descriptor.tone}</p>
+                <div className="advice">
+                  <p className="advice-heading">{tips.length ? 'Where to focus' : 'Reading the pattern'}</p>
+                  {tips.length ? (
+                    <ul>{tips.map((t, i) => <li key={i}>{t}</li>)}</ul>
+                  ) : (
+                    <p className="advice-empty">No single habit stands out — the pattern looks fairly even.</p>
+                  )}
+                </div>
               </>
             )}
             <LiveMeta formData={formData} />
